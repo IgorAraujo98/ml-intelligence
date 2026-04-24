@@ -2,7 +2,6 @@
 import { useState } from "react";
 import { api, store } from "@/lib/api";
 import Link from "next/link";
-import Image from "next/image";
 
 type TargetItem = {
   id: string;
@@ -26,7 +25,8 @@ type MarketResult = {
     keywords: { word: string; count: number }[];
     top_sellers: { nickname: string; items: number; total_sold: number }[];
     quality: { free_shipping_pct: number; fulfillment_pct: number };
-    target_item?: TargetItem;
+    target_item?: TargetItem | null;
+    url_fallback?: boolean;
   };
   insights: {
     audience: string;
@@ -223,18 +223,29 @@ export default function Module1() {
       {result && (
         <div className="mt-8 space-y-6">
 
+          {/* Aviso de fallback quando o produto não pôde ser acessado diretamente */}
+          {result.market.url_fallback && (
+            <div className="p-4 bg-yellow-900/20 border border-yellow-700 rounded-lg text-sm text-yellow-300 flex items-start gap-2">
+              <span className="mt-0.5">⚠️</span>
+              <span>
+                O Mercado Livre restringiu o acesso direto a este anúncio (403). A análise foi feita com base nas <strong>palavras-chave extraídas da URL</strong> — os dados de mercado são precisos, mas o card do produto específico não está disponível.
+              </span>
+            </div>
+          )}
+
           {/* Card do produto analisado (só no modo URL) */}
           {result.market.target_item && (
             <div className="card border border-[#3483FA]">
               <h2 className="section-title">📦 Produto Analisado</h2>
               <div className="flex gap-4">
                 {result.market.target_item.thumbnail && (
-                  <Image
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
                     src={result.market.target_item.thumbnail.replace("http://", "https://")}
                     alt={result.market.target_item.title}
                     width={96}
                     height={96}
-                    className="rounded-lg object-cover border border-[#0F3460] flex-shrink-0"
+                    className="rounded-lg object-cover border border-[#0F3460] flex-shrink-0 w-24 h-24"
                   />
                 )}
                 <div className="flex-1 min-w-0">
