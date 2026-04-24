@@ -5,86 +5,32 @@ from collections import Counter
 ML_BASE = "https://api.mercadolibre.com"
 SITE = "MLB"
 
-
-def extract_item_id_from_url(url: str) -> tuple[str | None, str]:
-    """
-    Extrai o ID do item/catálogo de qualquer URL do Mercado Livre.
-    Retorna (id, tipo) onde tipo é 'item', 'catalog' ou 'unknown'.
-    """
-    # Catálogo: /p/MLB seguido de dígitos
-    catalog_match = re.search(r"/p/(MLB\d+)", url, re.IGNORECASE)
-    if catalog_match:
-        return catalog_match.group(1), "catalog"
-
-    # Item normal: MLB- ou MLB seguido de dígitos
-    item_match = re.search(r"MLB-?(\d+)", url, re.IGNORECASE)
-    if item_match:
-        return f"MLB{item_match.group(1)}", "item"
-
-    return None, "unknown"
+# Headers que imitam um browser para evitar bloqueios 403
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+    "Referer": "https://www.mercadolivre.com.br/",
+    "Origin": "https://www.mercadolivre.com.br",
+}
 
 
 def extract_query_from_url(url: str) -> str:
-    """Extrai palavras-chave do slug da URL como fallback quando o item retorna 403."""
-    # Remove protocolo, domínio e parâmetros
+    """Extrai palavras-chave do slug da URL do Mercado Livre."""
     path = re.sub(r"https?://[^/]+", "", url)
     path = re.sub(r"[?#].*$", "", path)
-    # Remove o ID do ML e barras
     path = re.sub(r"MLB-?\d+", "", path, flags=re.IGNORECASE)
     path = re.sub(r"/p/", " ", path)
-    # Substitui hífens e barras por espaços
     words = re.sub(r"[-/_]", " ", path).strip()
-    # Remove palavras muito curtas ou números soltos
     tokens = [w for w in words.split() if len(w) > 2 and not w.isdigit()]
-    return " ".join(tokens[:6])  # máx 6 palavras
-
-
-async def get_catalog_item(catalog_id: str) -> dict | None:
-    """Busca o primeiro item de uma página de catálogo do ML. Retorna None se não acessível."""
-    url = f"{ML_BASE}/products/{catalog_id}/items"
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(url)
-        if r.status_code == 200:
-            results = r.json().get("results", [])
-            if results:
-                item_id = results[0].get("id", "")
-                item_r = await client.get(f"{ML_BASE}/items/{item_id}")
-                if item_r.status_code == 200:
-                    return item_r.json()
-        return None
-
-
-async def get_item_details_safe(item_id: str) -> dict | None:
-    """Busca detalhes do item. Retorna None em caso de 403/404 em vez de lançar exceção."""
-    url = f"{ML_BASE}/items/{item_id}"
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(url)
-        if r.status_code == 200:
-            return r.json()
-        return None
+    return " ".join(tokens[:7])
 
 
 async def search_products(query: str, limit: int = 50) -> dict:
     url = f"{ML_BASE}/sites/{SITE}/search"
     params = {"q": query, "limit": limit}
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=20, headers=HEADERS) as client:
         r = await client.get(url, params=params)
-        r.raise_for_status()
-        return r.json()
-
-
-async def get_item_details(item_id: str) -> dict:
-    url = f"{ML_BASE}/items/{item_id}"
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(url)
-        r.raise_for_status()
-        return r.json()
-
-
-async def get_category(category_id: str) -> dict:
-    url = f"{ML_BASE}/categories/{category_id}"
-    async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.get(url)
         r.raise_for_status()
         return r.json()
 
@@ -108,7 +54,7 @@ def extract_keywords(items: list) -> list:
     stopwords = {
         "de", "da", "do", "para", "com", "em", "o", "a", "os", "as",
         "e", "ou", "no", "na", "um", "uma", "que", "por", "se", "ao",
-        "dos", "das", "nos", "nas", "ao", "pelo", "pela",
+        "dos", "das", "nos", "nas", "pelo", "pela", "kit", "jogo", "par",
     }
     words = []
     for item in items:
@@ -138,17 +84,6 @@ def analyze_sellers(items: list) -> list:
         sellers[sid]["items"] += 1
         sellers[sid]["total_sold"] += item.get("sold_quantity", 0)
     return sorted(sellers.values(), key=lambda x: x["total_sold"], reverse=True)[:5]
-
-
-def extract_item_attributes(item: dict) -> list[dict]:
-    """Converte os atributos da API do ML em lista de key/value."""
-    attrs = []
-    for a in item.get("attributes", []):
-        name = a.get("name", "")
-        value = a.get("value_name") or a.get("value_struct", {}).get("number", "")
-        if name and value:
-            attrs.append({"key": name, "value": str(value)})
-    return attrs[:15]
 
 
 def analyze_listing_quality(items: list) -> dict:

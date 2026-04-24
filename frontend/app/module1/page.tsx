@@ -3,19 +3,6 @@ import { useState } from "react";
 import { api, store } from "@/lib/api";
 import Link from "next/link";
 
-type TargetItem = {
-  id: string;
-  title: string;
-  price: number;
-  sold_quantity: number;
-  condition: string;
-  thumbnail: string;
-  free_shipping: boolean;
-  logistic_type: string;
-  attributes: { key: string; value: string }[];
-  price_position_pct: number | null;
-};
-
 type MarketResult = {
   query: string;
   source: string;
@@ -25,8 +12,6 @@ type MarketResult = {
     keywords: { word: string; count: number }[];
     top_sellers: { nickname: string; items: number; total_sold: number }[];
     quality: { free_shipping_pct: number; fulfillment_pct: number };
-    target_item?: TargetItem | null;
-    url_fallback?: boolean;
   };
   insights: {
     audience: string;
@@ -223,71 +208,11 @@ export default function Module1() {
       {result && (
         <div className="mt-8 space-y-6">
 
-          {/* Aviso de fallback quando o produto não pôde ser acessado diretamente */}
-          {result.market.url_fallback && (
-            <div className="p-4 bg-yellow-900/20 border border-yellow-700 rounded-lg text-sm text-yellow-300 flex items-start gap-2">
-              <span className="mt-0.5">⚠️</span>
-              <span>
-                O Mercado Livre restringiu o acesso direto a este anúncio (403). A análise foi feita com base nas <strong>palavras-chave extraídas da URL</strong> — os dados de mercado são precisos, mas o card do produto específico não está disponível.
-              </span>
-            </div>
-          )}
-
-          {/* Card do produto analisado (só no modo URL) */}
-          {result.market.target_item && (
-            <div className="card border border-[#3483FA]">
-              <h2 className="section-title">📦 Produto Analisado</h2>
-              <div className="flex gap-4">
-                {result.market.target_item.thumbnail && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={result.market.target_item.thumbnail.replace("http://", "https://")}
-                    alt={result.market.target_item.title}
-                    width={96}
-                    height={96}
-                    className="rounded-lg object-cover border border-[#0F3460] flex-shrink-0 w-24 h-24"
-                  />
-                )}
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-white font-semibold text-base leading-tight mb-2">
-                    {result.market.target_item.title}
-                  </h3>
-                  <div className="flex flex-wrap gap-3 text-sm">
-                    <span className="text-[#FFE600] font-bold text-lg">
-                      R$ {result.market.target_item.price.toFixed(2)}
-                    </span>
-                    <span className="badge-green">{result.market.target_item.sold_quantity.toLocaleString()} vendidos</span>
-                    {result.market.target_item.free_shipping && <span className="badge-blue">Frete grátis</span>}
-                    {result.market.target_item.logistic_type === "fulfillment" && (
-                      <span className="badge-yellow">Fulfillment</span>
-                    )}
-                  </div>
-                  {result.market.target_item.price_position_pct !== null && (
-                    <div className="mt-3">
-                      <div className="text-xs text-slate-500 mb-1">
-                        Posição de preço: mais barato que {result.market.target_item.price_position_pct}% do mercado
-                      </div>
-                      <div className="w-full h-2 bg-[#0F3460] rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-[#3483FA] rounded-full transition-all"
-                          style={{ width: `${result.market.target_item.price_position_pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {result.market.target_item.attributes?.length > 0 && (
-                <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-2">
-                  {result.market.target_item.attributes.slice(0, 6).map((a, i) => (
-                    <div key={i} className="bg-[#0F3460] rounded px-3 py-2 text-xs">
-                      <span className="text-slate-500">{a.key}:</span>{" "}
-                      <span className="text-white">{a.value}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+          {/* Termo pesquisado */}
+          {result.source === "url" && (
+            <div className="p-3 bg-[#0F3460] border border-[#1a4a8a] rounded-lg text-sm text-slate-300 flex items-center gap-2">
+              <span className="text-slate-500">Análise baseada em:</span>
+              <span className="text-white font-medium">&quot;{result.query}&quot;</span>
             </div>
           )}
 
