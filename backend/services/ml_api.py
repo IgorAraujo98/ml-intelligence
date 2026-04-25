@@ -1,13 +1,13 @@
 import os
 import re
 import time
+import asyncio
 import httpx
 from collections import Counter
 
 ML_BASE = "https://api.mercadolibre.com"
 SITE = "MLB"
 
-# Cache do token OAuth (válido por 6h, renovamos antes de expirar)
 _token_cache: dict = {"value": None, "expires_at": 0}
 
 
@@ -20,7 +20,7 @@ async def get_access_token() -> str:
     client_id = os.getenv("MELI_CLIENT_ID")
     client_secret = os.getenv("MELI_CLIENT_SECRET")
     if not client_id or not client_secret:
-        raise RuntimeError("MELI_CLIENT_ID e MELI_CLIENT_SECRET precisam estar configurados no .env")
+        raise RuntimeError("MELI_CLIENT_ID e MELI_CLIENT_SECRET precisam estar configurados.")
 
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(
@@ -39,14 +39,15 @@ async def get_access_token() -> str:
     return _token_cache["value"]
 
 
-async def _ml_get(path: str, params: dict | None = None) -> dict:
-    """GET autenticado na API do ML usando OAuth Bearer token."""
-    token = await get_access_token()
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+async def _ml_get(client: httpx.AsyncClient, path: str, params: dict | None = None) -> dict | None:
+    """GET autenticado. Retorna None em caso de erro (não derruba a análise inteira)."""
+    try:
         r = await client.get(f"{ML_BASE}{path}", params=params)
-        r.raise_for_status()
-        return r.json()
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return None
 
 
 def extract_query_from_url(url: str) -> str:
@@ -60,12 +61,48 @@ def extract_query_from_url(url: str) -> str:
     return " ".join(tokens[:7])
 
 
-async def search_products(query: str, limit: int = 50) -> dict:
-    return await _ml_get(f"/sites/{SITE}/search", {"q": query, "limit": limit})
+async def search_market(query: str) -> dict:
+    """
+    Coleta dados de mercado combinando dois endpoints:
+    1. /products/search → produtos de catálogo (nomes, total, atributos)
+    2. /products/{id}/items → anúncios reais de cada produto (preços, vendedores, frete)
+    """
+    token = await get_access_token()
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+
+    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+        catalog = await _ml_get(client, "/products/search", {
+            "site_id": SITE,
+            "q": query,
+            "status": "active",
+            "limit": 20,
+        })
+        if not catalog:
+            return {"products": [], "items": [], "total": 0}
+
+        products = catalog.get("results", [])
+        total = catalog.get("paging", {}).get("total", 0)
+
+        # Busca anúncios reais em paralelo (limite 10 produtos para não exceder rate limit)
+        tasks = [
+            _ml_get(client, f"/products/{p['id']}/items", {"limit": 5})
+            for p in products[:10]
+        ]
+        items_responses = await asyncio.gather(*tasks)
+
+        all_items = []
+        for prod, resp in zip(products[:10], items_responses):
+            if not resp:
+                continue
+            for item in resp.get("results", []):
+                item["product_name"] = prod.get("name", "")
+                all_items.append(item)
+
+    return {"products": products, "items": all_items, "total": total}
 
 
 def analyze_prices(items: list) -> dict:
-    prices = [i["price"] for i in items if "price" in i and i["price"] > 0]
+    prices = [i["price"] for i in items if "price" in i and i.get("price", 0) > 0]
     if not prices:
         return {"avg": 0, "min": 0, "max": 0, "median": 0}
     sorted_prices = sorted(prices)
@@ -79,16 +116,17 @@ def analyze_prices(items: list) -> dict:
     }
 
 
-def extract_keywords(items: list) -> list:
+def extract_keywords(products: list) -> list:
+    """Extrai keywords dos nomes dos produtos de catálogo."""
     stopwords = {
         "de", "da", "do", "para", "com", "em", "o", "a", "os", "as",
         "e", "ou", "no", "na", "um", "uma", "que", "por", "se", "ao",
         "dos", "das", "nos", "nas", "pelo", "pela", "kit", "jogo", "par",
     }
     words = []
-    for item in items:
-        title = item.get("title", "").lower()
-        for word in title.split():
+    for p in products:
+        name = p.get("name", "").lower()
+        for word in name.split():
             clean = "".join(c for c in word if c.isalnum())
             if clean and clean not in stopwords and len(clean) > 2:
                 words.append(clean)
@@ -99,27 +137,22 @@ def extract_keywords(items: list) -> list:
 def analyze_sellers(items: list) -> list:
     sellers: dict = {}
     for item in items:
-        seller = item.get("seller", {})
-        sid = seller.get("id")
+        sid = item.get("seller_id")
         if not sid:
             continue
         if sid not in sellers:
-            sellers[sid] = {
-                "id": sid,
-                "nickname": seller.get("nickname", ""),
-                "items": 0,
-                "total_sold": 0,
-            }
+            sellers[sid] = {"id": sid, "nickname": f"Vendedor {sid}", "items": 0, "total_sold": 0}
         sellers[sid]["items"] += 1
-        sellers[sid]["total_sold"] += item.get("sold_quantity", 0)
-    return sorted(sellers.values(), key=lambda x: x["total_sold"], reverse=True)[:5]
+    return sorted(sellers.values(), key=lambda x: x["items"], reverse=True)[:5]
 
 
 def analyze_listing_quality(items: list) -> dict:
-    with_free_shipping = sum(1 for i in items if i.get("shipping", {}).get("free_shipping"))
-    with_full = sum(1 for i in items if i.get("shipping", {}).get("logistic_type") == "fulfillment")
-    total = len(items) or 1
+    if not items:
+        return {"free_shipping_pct": 0, "fulfillment_pct": 0}
+    free = sum(1 for i in items if i.get("shipping", {}).get("free_shipping"))
+    full = sum(1 for i in items if i.get("shipping", {}).get("logistic_type") == "fulfillment")
+    total = len(items)
     return {
-        "free_shipping_pct": round(with_free_shipping / total * 100, 1),
-        "fulfillment_pct": round(with_full / total * 100, 1),
+        "free_shipping_pct": round(free / total * 100, 1),
+        "fulfillment_pct": round(full / total * 100, 1),
     }

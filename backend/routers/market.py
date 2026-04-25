@@ -26,11 +26,13 @@ class InsightsRequest(BaseModel):
     market_data: dict
 
 
-def _build_market_data(search_result: dict, items: list) -> dict:
+def _build_market_data(search_result: dict) -> dict:
+    items = search_result.get("items", [])
+    products = search_result.get("products", [])
     return {
-        "total": search_result.get("paging", {}).get("total", 0),
+        "total": search_result.get("total", 0),
         "prices": ml_api.analyze_prices(items),
-        "keywords": ml_api.extract_keywords(items),
+        "keywords": ml_api.extract_keywords(products),
         "top_sellers": ml_api.analyze_sellers(items),
         "quality": ml_api.analyze_listing_quality(items),
     }
@@ -46,15 +48,13 @@ async def analyze_market(req: MarketAnalysisRequest):
             search_query = ml_api.extract_query_from_url(req.product_url)
             if not search_query:
                 raise HTTPException(status_code=400, detail="Não foi possível extrair palavras-chave da URL.")
-            search_result = await ml_api.search_products(search_query, limit=50)
-            items = search_result.get("results", [])
-            market_data = _build_market_data(search_result, items)
+            search_result = await ml_api.search_market(search_query)
+            market_data = _build_market_data(search_result)
             query_for_insights = search_query
 
         elif req.source == "api":
-            search_result = await ml_api.search_products(req.query, limit=50)
-            items = search_result.get("results", [])
-            market_data = _build_market_data(search_result, items)
+            search_result = await ml_api.search_market(req.query)
+            market_data = _build_market_data(search_result)
             query_for_insights = req.query
 
         else:  # manual
