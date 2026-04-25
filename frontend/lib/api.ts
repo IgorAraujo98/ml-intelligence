@@ -15,18 +15,8 @@ async function post<T>(path: string, body: unknown): Promise<T> {
 
 export const api = {
   market: {
-    analyze: (body: {
-      query: string;
-      source: "api" | "manual" | "url";
-      product_url?: string;
-      manual_data?: {
-        avg_price: number;
-        min_price: number;
-        max_price: number;
-        total_listings: number;
-        top_keywords: string[];
-      };
-    }) => post("/market/analyze", body),
+    insights: (body: { query: string; market_data: unknown }) =>
+      post("/market/insights", body),
   },
 
   listing: {
