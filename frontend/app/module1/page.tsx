@@ -1,7 +1,6 @@
 "use client";
 import { useState } from "react";
 import { api, store } from "@/lib/api";
-import { fetchMarketData, extractKeywordsFromUrl, type MarketData } from "@/lib/ml";
 import Link from "next/link";
 
 type MarketResult = {
@@ -48,42 +47,26 @@ export default function Module1() {
     setError("");
     setLoading(true);
     try {
-      let searchQuery = "";
-      let marketData: MarketData;
+      const body =
+        source === "url"
+          ? { query: productUrl, source: "url" as const, product_url: productUrl }
+          : source === "api"
+          ? { query, source: "api" as const }
+          : {
+              query,
+              source: "manual" as const,
+              manual_data: {
+                avg_price: parseFloat(manual.avg_price),
+                min_price: parseFloat(manual.min_price),
+                max_price: parseFloat(manual.max_price),
+                total_listings: parseInt(manual.total_listings),
+                top_keywords: manual.top_keywords.split(",").map((k) => k.trim()).filter(Boolean),
+              },
+            };
 
-      if (source === "url") {
-        searchQuery = extractKeywordsFromUrl(productUrl);
-        if (!searchQuery) {
-          throw new Error("Não foi possível extrair palavras-chave da URL informada.");
-        }
-        marketData = await fetchMarketData(searchQuery);
-      } else if (source === "api") {
-        searchQuery = query;
-        marketData = await fetchMarketData(query);
-      } else {
-        searchQuery = query;
-        const avg = parseFloat(manual.avg_price);
-        marketData = {
-          total: parseInt(manual.total_listings),
-          prices: {
-            avg,
-            min: parseFloat(manual.min_price),
-            max: parseFloat(manual.max_price),
-            median: avg,
-          },
-          keywords: manual.top_keywords.split(",").map((k) => k.trim()).filter(Boolean).map((w) => ({ word: w, count: 1 })),
-          top_sellers: [],
-          quality: { free_shipping_pct: 0, fulfillment_pct: 0 },
-        };
-      }
-
-      const data = (await api.market.insights({
-        query: searchQuery,
-        market_data: marketData,
-      })) as MarketResult;
-
-      setResult({ ...data, source });
-      store.save("market", { ...data, source });
+      const data = (await api.market.analyze(body)) as MarketResult;
+      setResult(data);
+      store.save("market", data);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erro desconhecido");
     } finally {

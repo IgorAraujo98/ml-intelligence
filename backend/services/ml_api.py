@@ -1,18 +1,52 @@
+import os
 import re
+import time
 import httpx
 from collections import Counter
 
 ML_BASE = "https://api.mercadolibre.com"
 SITE = "MLB"
 
-# Headers que imitam um browser para evitar bloqueios 403
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-    "Referer": "https://www.mercadolivre.com.br/",
-    "Origin": "https://www.mercadolivre.com.br",
-}
+# Cache do token OAuth (válido por 6h, renovamos antes de expirar)
+_token_cache: dict = {"value": None, "expires_at": 0}
+
+
+async def get_access_token() -> str:
+    """Obtém token de acesso da API do ML via client_credentials. Cacheia em memória."""
+    now = time.time()
+    if _token_cache["value"] and _token_cache["expires_at"] > now + 60:
+        return _token_cache["value"]
+
+    client_id = os.getenv("MELI_CLIENT_ID")
+    client_secret = os.getenv("MELI_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError("MELI_CLIENT_ID e MELI_CLIENT_SECRET precisam estar configurados no .env")
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(
+            f"{ML_BASE}/oauth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            },
+        )
+        r.raise_for_status()
+        body = r.json()
+
+    _token_cache["value"] = body["access_token"]
+    _token_cache["expires_at"] = now + body.get("expires_in", 21600) - 300
+    return _token_cache["value"]
+
+
+async def _ml_get(path: str, params: dict | None = None) -> dict:
+    """GET autenticado na API do ML usando OAuth Bearer token."""
+    token = await get_access_token()
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=20, headers=headers) as client:
+        r = await client.get(f"{ML_BASE}{path}", params=params)
+        r.raise_for_status()
+        return r.json()
 
 
 def extract_query_from_url(url: str) -> str:
@@ -27,12 +61,7 @@ def extract_query_from_url(url: str) -> str:
 
 
 async def search_products(query: str, limit: int = 50) -> dict:
-    url = f"{ML_BASE}/sites/{SITE}/search"
-    params = {"q": query, "limit": limit}
-    async with httpx.AsyncClient(timeout=20, headers=HEADERS) as client:
-        r = await client.get(url, params=params)
-        r.raise_for_status()
-        return r.json()
+    return await _ml_get(f"/sites/{SITE}/search", {"q": query, "limit": limit})
 
 
 def analyze_prices(items: list) -> dict:
