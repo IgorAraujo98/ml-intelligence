@@ -36,9 +36,6 @@ export const api = {
       product_info: { name: string; description: string; category?: string };
       market_data: unknown;
     }) => post("/listing/generate", body),
-
-    generateImage: (briefing: string) =>
-      post<{ image_url: string }>("/listing/generate-image", { briefing }),
   },
 
   margin: {

@@ -56,7 +56,7 @@ export default function Sidebar() {
 
       <div className="p-4 border-t border-[#0F3460]">
         <div className="text-xs text-slate-600 text-center">
-          Powered by GPT-4o + DALL-E 3
+          Powered by Google Gemini 2.0
         </div>
       </div>
     </aside>

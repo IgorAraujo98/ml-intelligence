@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from services import openai_svc
+from services import gemini_svc
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ async def campaign_strategy(req: CampaignRequest):
             "total_competitors": req.market_data.get("market", {}).get("total", 0),
         }
 
-        strategy = await openai_svc.generate_campaign_strategy(combined)
+        strategy = await gemini_svc.generate_campaign_strategy(combined)
         return strategy
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

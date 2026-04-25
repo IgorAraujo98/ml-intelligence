@@ -1,7 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
 import { api, store } from "@/lib/api";
-import Image from "next/image";
 import Link from "next/link";
 
 type ListingResult = {
@@ -20,10 +19,8 @@ export default function Module2() {
   const [category, setCategory] = useState("");
   const [marketData, setMarketData] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
-  const [loadingImage, setLoadingImage] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ListingResult | null>(null);
-  const [imageUrl, setImageUrl] = useState("");
   const [activeTab, setActiveTab] = useState<"title" | "description" | "specs" | "keywords" | "image">("title");
 
   useEffect(() => {
@@ -49,19 +46,6 @@ export default function Module2() {
     }
   }
 
-  async function handleGenerateImage() {
-    if (!result?.image_briefing) return;
-    setLoadingImage(true);
-    try {
-      const { image_url } = await api.listing.generateImage(result.image_briefing);
-      setImageUrl(image_url);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Erro ao gerar imagem");
-    } finally {
-      setLoadingImage(false);
-    }
-  }
-
   const titleLength = result?.title?.length ?? 0;
   const titleColor = titleLength > 55 ? "text-red-400" : titleLength > 45 ? "text-yellow-400" : "text-green-400";
 
@@ -70,7 +54,7 @@ export default function Module2() {
     { id: "description", label: "Descrição" },
     { id: "specs", label: "Ficha Técnica" },
     { id: "keywords", label: "Keywords" },
-    { id: "image", label: "Imagens" },
+    { id: "image", label: "Briefing de Imagem" },
   ] as const;
 
   return (
@@ -211,25 +195,49 @@ export default function Module2() {
 
             {activeTab === "image" && (
               <div>
-                <div className="text-xs text-slate-500 mb-3">BRIEFING DA IMAGEM</div>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-slate-500">BRIEFING PRONTO PARA GERAR IMAGEM</span>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(result.image_briefing)}
+                    className="text-xs text-[#3483FA] hover:text-white transition-colors"
+                  >
+                    📋 Copiar briefing
+                  </button>
+                </div>
                 <div className="bg-[#0F3460] rounded-lg p-4 text-slate-300 text-sm mb-4 italic">
                   &quot;{result.image_briefing}&quot;
                 </div>
-                <button onClick={handleGenerateImage} className="btn-secondary" disabled={loadingImage}>
-                  {loadingImage
-                    ? <span className="flex items-center gap-2"><span className="loader" /> Gerando com DALL-E 3...</span>
-                    : "🎨 Gerar Imagem com DALL-E 3"}
-                </button>
-                {imageUrl && (
-                  <div className="mt-4">
-                    <Image src={imageUrl} alt="Produto gerado" width={512} height={512}
-                      className="rounded-lg border border-[#0F3460]" />
-                    <a href={imageUrl} target="_blank" rel="noopener noreferrer"
-                      className="mt-2 block text-xs text-slate-500 hover:text-white transition-colors">
-                      🔗 Abrir imagem original
+                <div className="bg-[#16213E] border border-[#0F3460] rounded-lg p-4">
+                  <div className="text-xs text-slate-400 mb-3">
+                    Copie o briefing acima e cole em uma destas ferramentas para gerar a imagem do produto:
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                    <a href="https://www.midjourney.com" target="_blank" rel="noopener noreferrer"
+                      className="bg-[#0F3460] hover:bg-[#1a4a8a] rounded px-3 py-2 text-sm text-white text-center transition-colors">
+                      🎨 Midjourney
+                    </a>
+                    <a href="https://leonardo.ai" target="_blank" rel="noopener noreferrer"
+                      className="bg-[#0F3460] hover:bg-[#1a4a8a] rounded px-3 py-2 text-sm text-white text-center transition-colors">
+                      🖼️ Leonardo AI
+                    </a>
+                    <a href="https://chat.openai.com" target="_blank" rel="noopener noreferrer"
+                      className="bg-[#0F3460] hover:bg-[#1a4a8a] rounded px-3 py-2 text-sm text-white text-center transition-colors">
+                      🤖 ChatGPT (DALL-E)
+                    </a>
+                    <a href="https://gemini.google.com" target="_blank" rel="noopener noreferrer"
+                      className="bg-[#0F3460] hover:bg-[#1a4a8a] rounded px-3 py-2 text-sm text-white text-center transition-colors">
+                      ✨ Google Gemini
+                    </a>
+                    <a href="https://playground.com" target="_blank" rel="noopener noreferrer"
+                      className="bg-[#0F3460] hover:bg-[#1a4a8a] rounded px-3 py-2 text-sm text-white text-center transition-colors">
+                      🎭 Playground
+                    </a>
+                    <a href="https://firefly.adobe.com" target="_blank" rel="noopener noreferrer"
+                      className="bg-[#0F3460] hover:bg-[#1a4a8a] rounded px-3 py-2 text-sm text-white text-center transition-colors">
+                      🔥 Adobe Firefly
                     </a>
                   </div>
-                )}
+                </div>
               </div>
             )}
           </div>

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from services import ml_api, openai_svc
+from services import ml_api, gemini_svc
 
 router = APIRouter()
 
@@ -75,7 +75,7 @@ async def analyze_market(req: MarketAnalysisRequest):
             }
             query_for_insights = req.query
 
-        insights = await openai_svc.generate_market_insights(query_for_insights, market_data)
+        insights = await gemini_svc.generate_market_insights(query_for_insights, market_data)
         return {
             "query": query_for_insights,
             "source": req.source,
@@ -92,7 +92,7 @@ async def analyze_market(req: MarketAnalysisRequest):
 async def generate_insights(req: InsightsRequest):
     """Gera insights a partir de dados de mercado já coletados (compatibilidade)."""
     try:
-        insights = await openai_svc.generate_market_insights(req.query, req.market_data)
+        insights = await gemini_svc.generate_market_insights(req.query, req.market_data)
         return {"query": req.query, "market": req.market_data, "insights": insights}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
