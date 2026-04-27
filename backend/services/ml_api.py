@@ -61,6 +61,117 @@ def extract_query_from_url(url: str) -> str:
     return " ".join(tokens[:7])
 
 
+def aggregate_product(product: dict, items: list) -> dict:
+    """Agrega dados de um produto de catálogo + seus anúncios em uma estrutura plana para análise."""
+    if not items:
+        return {
+            "id": product.get("id"),
+            "name": product.get("name"),
+            "category_id": product.get("category_id") or product.get("domain_id"),
+            "attributes": product.get("attributes", []),
+            "pictures": [p.get("url") for p in product.get("pictures", [])][:3],
+            "main_features": product.get("main_features", []),
+            "short_description": (product.get("short_description") or {}).get("content", ""),
+            "buy_box": None,
+            "items_count": 0,
+            "price_avg": 0,
+            "price_min": 0,
+            "price_max": 0,
+            "free_shipping_pct": 0,
+            "fulfillment_pct": 0,
+            "discount_count": 0,
+        }
+
+    # Buy box winner = item com mais "tags" promocionais ou primeiro
+    buy_box = items[0]
+    prices = [i["price"] for i in items if i.get("price", 0) > 0]
+    free_shipping = sum(1 for i in items if i.get("shipping", {}).get("free_shipping"))
+    fulfillment = sum(1 for i in items if i.get("shipping", {}).get("logistic_type") == "fulfillment")
+    with_discount = sum(1 for i in items if i.get("original_price") and i.get("original_price") > i.get("price", 0))
+
+    return {
+        "id": product.get("id"),
+        "name": product.get("name"),
+        "category_id": product.get("category_id") or product.get("domain_id"),
+        "attributes": product.get("attributes", [])[:10],
+        "pictures": [p.get("url") for p in product.get("pictures", [])][:3],
+        "main_features": product.get("main_features", []),
+        "short_description": (product.get("short_description") or {}).get("content", ""),
+        "buy_box": {
+            "price": buy_box.get("price"),
+            "original_price": buy_box.get("original_price"),
+            "seller_id": buy_box.get("seller_id"),
+            "condition": buy_box.get("condition"),
+            "listing_type": buy_box.get("listing_type_id"),
+            "free_shipping": buy_box.get("shipping", {}).get("free_shipping", False),
+            "logistic_type": buy_box.get("shipping", {}).get("logistic_type"),
+            "tags": buy_box.get("tags", []),
+        },
+        "items_count": len(items),
+        "price_avg": round(sum(prices) / len(prices), 2) if prices else 0,
+        "price_min": min(prices) if prices else 0,
+        "price_max": max(prices) if prices else 0,
+        "free_shipping_pct": round(free_shipping / len(items) * 100, 1),
+        "fulfillment_pct": round(fulfillment / len(items) * 100, 1),
+        "discount_count": with_discount,
+    }
+
+
+async def fetch_target_with_competitors(product_url: str | None, query: str | None = None) -> dict:
+    """
+    Coleta o produto-alvo + concorrentes para análise de dashboard.
+    Se product_url for fornecido, tenta identificar o produto exato; senão usa query.
+    """
+    if product_url:
+        target_id, _ = extract_item_id_from_url(product_url)
+        search_query = query or extract_query_from_url(product_url)
+    else:
+        target_id = None
+        search_query = query
+
+    if not search_query:
+        return {"target": None, "competitors": [], "market_summary": {}}
+
+    market = await search_market(search_query)
+    products = market.get("products", [])
+    items = market.get("items", [])
+
+    # Agrupa items por produto
+    by_product: dict[str, list] = {}
+    for it in items:
+        by_product.setdefault(it.get("product_name", ""), []).append(it)
+
+    # Identifica produto-alvo
+    target_product = None
+    if target_id:
+        target_product = next((p for p in products if p.get("id") == target_id), None)
+    if not target_product and products:
+        target_product = products[0]
+
+    if not target_product:
+        return {"target": None, "competitors": [], "market_summary": {}}
+
+    target = aggregate_product(target_product, by_product.get(target_product.get("name", ""), []))
+
+    # Competidores: top 9 produtos restantes
+    competitor_products = [p for p in products if p.get("id") != target_product.get("id")][:9]
+    competitors = [
+        aggregate_product(p, by_product.get(p.get("name", ""), []))
+        for p in competitor_products
+    ]
+
+    return {
+        "target": target,
+        "competitors": competitors,
+        "market_summary": {
+            "total_listings": market.get("total", 0),
+            "products_analyzed": len(products),
+            "items_analyzed": len(items),
+            "category_id": target.get("category_id"),
+        },
+    }
+
+
 async def search_market(query: str) -> dict:
     """
     Coleta dados de mercado combinando dois endpoints:

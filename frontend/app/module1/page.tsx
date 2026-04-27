@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { api, store } from "@/lib/api";
+import Dashboard, { type DashboardData } from "@/components/Dashboard";
 import Link from "next/link";
 
 type MarketResult = {
@@ -39,8 +40,27 @@ export default function Module1() {
     top_keywords: "",
   });
   const [loading, setLoading] = useState(false);
+  const [loadingDashboard, setLoadingDashboard] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<MarketResult | null>(null);
+  const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+
+  async function handleDashboard() {
+    setError("");
+    setLoadingDashboard(true);
+    try {
+      const body = source === "url"
+        ? { product_url: productUrl }
+        : { query: query };
+      const data = (await api.market.dashboard(body)) as DashboardData;
+      setDashboard(data);
+      store.save("listing", { target: data.target });
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Erro desconhecido");
+    } finally {
+      setLoadingDashboard(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -212,6 +232,27 @@ export default function Module1() {
               <span className="text-white font-medium">&quot;{result.query}&quot;</span>
             </div>
           )}
+
+          {/* CTA Dashboard Completo */}
+          {(source === "url" || source === "api") && !dashboard && (
+            <div className="card border border-[#FFE600] bg-gradient-to-br from-[#16213E] to-[#1a1a2e]">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h2 className="text-lg font-bold text-white mb-1">📊 Dashboard Completo do Anúncio</h2>
+                  <p className="text-sm text-slate-400">
+                    Análise detalhada com 10 seções: performance, concorrência, diagnóstico, recomendações e alertas.
+                  </p>
+                </div>
+                <button onClick={handleDashboard} className="btn-primary" disabled={loadingDashboard}>
+                  {loadingDashboard
+                    ? <span className="flex items-center gap-2"><span className="loader" /> Gerando dashboard...</span>
+                    : "🚀 Gerar Dashboard Completo"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {dashboard && <Dashboard data={dashboard} />}
 
           {/* Preços */}
           <div className="card">

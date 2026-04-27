@@ -29,12 +29,15 @@ export const api = {
     }) => post("/market/analyze", body),
     insights: (body: { query: string; market_data: unknown }) =>
       post("/market/insights", body),
+    dashboard: (body: { product_url?: string; query?: string }) =>
+      post("/market/dashboard", body),
   },
 
   listing: {
     generate: (body: {
-      product_info: { name: string; description: string; category?: string };
+      product_info?: { name: string; description: string; category?: string };
       market_data: unknown;
+      product_url?: string;
     }) => post("/listing/generate", body),
   },
 

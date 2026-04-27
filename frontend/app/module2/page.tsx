@@ -13,19 +13,30 @@ type ListingResult = {
   image_briefing: string;
 };
 
+type TargetCache = { target?: { name?: string; pictures?: string[]; buy_box?: { price?: number } } };
+
 export default function Module2() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("");
   const [marketData, setMarketData] = useState<unknown>(null);
+  const [autoTarget, setAutoTarget] = useState<TargetCache["target"] | null>(null);
+  const [mode, setMode] = useState<"auto" | "manual">("auto");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<ListingResult | null>(null);
   const [activeTab, setActiveTab] = useState<"title" | "description" | "specs" | "keywords" | "image">("title");
 
   useEffect(() => {
-    const saved = store.load("market");
-    if (saved) setMarketData(saved);
+    const market = store.load("market");
+    if (market) setMarketData(market);
+    const cached = store.load<TargetCache>("listing");
+    if (cached?.target) {
+      setAutoTarget(cached.target);
+      setMode("auto");
+    } else {
+      setMode("manual");
+    }
   }, []);
 
   async function handleGenerate(e: React.FormEvent) {
@@ -33,12 +44,17 @@ export default function Module2() {
     setError("");
     setLoading(true);
     try {
-      const data = (await api.listing.generate({
-        product_info: { name, description, category: category || undefined },
-        market_data: marketData || {},
-      })) as ListingResult;
+      const body =
+        mode === "auto" && autoTarget
+          ? { market_data: { ...(marketData as object || {}), target: autoTarget } }
+          : {
+              product_info: { name, description, category: category || undefined },
+              market_data: marketData || {},
+            };
+
+      const data = (await api.listing.generate(body)) as ListingResult;
       setResult(data);
-      store.save("listing", data);
+      store.save("listing", { ...data, target: autoTarget });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Erro desconhecido");
     } finally {
@@ -78,33 +94,72 @@ export default function Module2() {
       )}
 
       <form onSubmit={handleGenerate}>
-        <div className="card mb-6">
-          <h2 className="section-title">Informações do Produto</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="label">Nome do Produto *</label>
-              <input className="input" placeholder="Ex: Fone de Ouvido Bluetooth 5.0 com Cancelamento de Ruído"
-                value={name} onChange={(e) => setName(e.target.value)} required />
+        {autoTarget && (
+          <div className="card mb-6">
+            <div className="flex gap-2 mb-4">
+              <button type="button" onClick={() => setMode("auto")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  mode === "auto" ? "bg-[#3483FA] text-white" : "bg-[#0F3460] text-slate-400 hover:text-white"
+                }`}>
+                ⚡ Automático (do Módulo 1)
+              </button>
+              <button type="button" onClick={() => setMode("manual")}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  mode === "manual" ? "bg-[#3483FA] text-white" : "bg-[#0F3460] text-slate-400 hover:text-white"
+                }`}>
+                ✏️ Manual
+              </button>
             </div>
-            <div>
-              <label className="label">Descrição básica / diferenciais *</label>
-              <textarea className="input h-24 resize-none" placeholder="Descreva os principais atributos, diferenciais e público do produto..."
-                value={description} onChange={(e) => setDescription(e.target.value)} required />
-            </div>
-            <div>
-              <label className="label">Categoria (opcional)</label>
-              <input className="input" placeholder="Ex: Eletrônicos, Moda, Casa e Jardim..."
-                value={category} onChange={(e) => setCategory(e.target.value)} />
+            {mode === "auto" && (
+              <div className="flex gap-3 items-center bg-[#0F3460] rounded-lg p-3">
+                {autoTarget.pictures?.[0] && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={autoTarget.pictures[0].replace("http://", "https://")} alt={autoTarget.name}
+                    className="w-16 h-16 rounded object-cover flex-shrink-0" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-slate-500 mb-1">PRODUTO IDENTIFICADO</div>
+                  <p className="text-sm text-white font-medium leading-tight">{autoTarget.name}</p>
+                  {autoTarget.buy_box?.price && (
+                    <p className="text-[#FFE600] font-bold text-sm mt-1">R$ {autoTarget.buy_box.price.toFixed(2)}</p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {mode === "manual" && (
+          <div className="card mb-6">
+            <h2 className="section-title">Informações do Produto</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="label">Nome do Produto *</label>
+                <input className="input" placeholder="Ex: Fone de Ouvido Bluetooth 5.0 com Cancelamento de Ruído"
+                  value={name} onChange={(e) => setName(e.target.value)} required />
+              </div>
+              <div>
+                <label className="label">Descrição básica / diferenciais *</label>
+                <textarea className="input h-24 resize-none" placeholder="Descreva os principais atributos, diferenciais e público do produto..."
+                  value={description} onChange={(e) => setDescription(e.target.value)} required />
+              </div>
+              <div>
+                <label className="label">Categoria (opcional)</label>
+                <input className="input" placeholder="Ex: Eletrônicos, Moda, Casa e Jardim..."
+                  value={category} onChange={(e) => setCategory(e.target.value)} />
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {error && (
           <div className="mb-4 p-4 bg-red-900/30 border border-red-700 rounded-lg text-red-300 text-sm">{error}</div>
         )}
 
         <button type="submit" className="btn-primary w-full" disabled={loading}>
-          {loading ? <span className="flex items-center justify-center gap-2"><span className="loader" /> Gerando anúncio com IA...</span> : "Gerar Anúncio Completo"}
+          {loading
+            ? <span className="flex items-center justify-center gap-2"><span className="loader" /> Gerando anúncio com IA...</span>
+            : mode === "auto" ? "✨ Gerar Anúncio Automaticamente" : "Gerar Anúncio Completo"}
         </button>
       </form>
 

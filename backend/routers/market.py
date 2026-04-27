@@ -26,6 +26,11 @@ class InsightsRequest(BaseModel):
     market_data: dict
 
 
+class DashboardRequest(BaseModel):
+    product_url: Optional[str] = None
+    query: Optional[str] = None
+
+
 def _build_market_data(search_result: dict) -> dict:
     items = search_result.get("items", [])
     products = search_result.get("products", [])
@@ -81,6 +86,37 @@ async def analyze_market(req: MarketAnalysisRequest):
             "source": req.source,
             "market": market_data,
             "insights": insights,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/dashboard")
+async def dashboard_analysis(req: DashboardRequest):
+    """Dashboard completo de 10 seções: coleta dados + análise IA do produto-alvo vs concorrentes."""
+    if not req.product_url and not req.query:
+        raise HTTPException(status_code=400, detail="Forneça product_url ou query.")
+    try:
+        data = await ml_api.fetch_target_with_competitors(req.product_url, req.query)
+        if not data.get("target"):
+            raise HTTPException(
+                status_code=404,
+                detail="Não foi possível identificar o produto na busca do ML. Verifique a URL ou query.",
+            )
+
+        analysis = await gemini_svc.generate_dashboard_analysis(
+            target=data["target"],
+            competitors=data["competitors"],
+            market_summary=data["market_summary"],
+        )
+
+        return {
+            "target": data["target"],
+            "competitors": data["competitors"],
+            "market_summary": data["market_summary"],
+            "analysis": analysis,
         }
     except HTTPException:
         raise

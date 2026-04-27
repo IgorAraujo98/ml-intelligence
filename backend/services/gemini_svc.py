@@ -1,7 +1,9 @@
 import os
 import json
+import asyncio
 from google import genai
 from google.genai import types
+from google.genai.errors import ServerError, ClientError
 
 MODEL = "gemini-2.5-flash"
 
@@ -59,6 +61,129 @@ LISTING_SCHEMA = {
     ],
 }
 
+DASHBOARD_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "overview": {
+            "type": "OBJECT",
+            "properties": {
+                "status": {"type": "STRING"},
+                "strength": {"type": "STRING"},
+                "weakness": {"type": "STRING"},
+                "growth_potential": {"type": "STRING", "enum": ["alto", "medio", "baixo"]},
+                "competitiveness_level": {"type": "STRING", "enum": ["alta", "media", "baixa"]},
+            },
+            "required": ["status", "strength", "weakness", "growth_potential", "competitiveness_level"],
+        },
+        "performance": {
+            "type": "OBJECT",
+            "properties": {
+                "trend": {"type": "STRING", "enum": ["crescendo", "estavel", "queda", "indisponivel"]},
+                "summary": {"type": "STRING"},
+                "metrics": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "label": {"type": "STRING"},
+                            "value": {"type": "STRING"},
+                            "context": {"type": "STRING"},
+                        },
+                        "required": ["label", "value", "context"],
+                    },
+                },
+            },
+            "required": ["trend", "summary", "metrics"],
+        },
+        "traffic_conversion": {
+            "type": "OBJECT",
+            "properties": {
+                "main_issue": {"type": "STRING", "enum": ["trafego", "conversao", "preco", "oferta", "indisponivel"]},
+                "explanation": {"type": "STRING"},
+            },
+            "required": ["main_issue", "explanation"],
+        },
+        "price_competitiveness": {
+            "type": "OBJECT",
+            "properties": {
+                "classification": {
+                    "type": "STRING",
+                    "enum": ["muito_competitivo", "competitivo", "neutro", "acima_do_mercado", "pouco_competitivo"],
+                },
+                "price_diff_pct": {"type": "NUMBER"},
+                "summary": {"type": "STRING"},
+            },
+            "required": ["classification", "price_diff_pct", "summary"],
+        },
+        "ranking_visibility": {
+            "type": "OBJECT",
+            "properties": {
+                "visibility_trend": {"type": "STRING", "enum": ["ganhando", "estavel", "perdendo", "indisponivel"]},
+                "summary": {"type": "STRING"},
+            },
+            "required": ["visibility_trend", "summary"],
+        },
+        "competition": {
+            "type": "OBJECT",
+            "properties": {
+                "main_competitor": {"type": "STRING"},
+                "best_seller": {"type": "STRING"},
+                "best_price": {"type": "STRING"},
+                "what_to_copy": {"type": "STRING"},
+                "what_to_avoid": {"type": "STRING"},
+            },
+            "required": ["main_competitor", "best_seller", "best_price", "what_to_copy", "what_to_avoid"],
+        },
+        "diagnosis": {
+            "type": "OBJECT",
+            "properties": {
+                "category": {
+                    "type": "STRING",
+                    "enum": [
+                        "vencedor", "com_potencial", "estagnado", "em_queda",
+                        "pouco_competitivo", "problema_conversao", "problema_trafego", "problema_preco",
+                    ],
+                },
+                "reason": {"type": "STRING"},
+            },
+            "required": ["category", "reason"],
+        },
+        "recommendations": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "area": {"type": "STRING"},
+                    "priority": {"type": "STRING", "enum": ["alta", "media", "baixa"]},
+                    "expected_impact": {"type": "STRING"},
+                    "justification": {"type": "STRING"},
+                    "action": {"type": "STRING"},
+                },
+                "required": ["area", "priority", "expected_impact", "justification", "action"],
+            },
+        },
+        "alerts": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "type": {"type": "STRING"},
+                    "severity": {"type": "STRING", "enum": ["critica", "alta", "media", "baixa"]},
+                    "message": {"type": "STRING"},
+                },
+                "required": ["type", "severity", "message"],
+            },
+        },
+        "executive_summary": {"type": "STRING"},
+    },
+    "required": [
+        "overview", "performance", "traffic_conversion", "price_competitiveness",
+        "ranking_visibility", "competition", "diagnosis", "recommendations",
+        "alerts", "executive_summary",
+    ],
+}
+
+
 CAMPAIGN_SCHEMA = {
     "type": "OBJECT",
     "properties": {
@@ -94,18 +219,40 @@ CAMPAIGN_SCHEMA = {
 }
 
 
-async def _call_structured(prompt: str, schema: dict) -> dict:
-    """Chama Gemini com saída JSON estruturada e retorna o dict parseado."""
-    response = await get_client().aio.models.generate_content(
-        model=MODEL,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=schema,
-            temperature=0.7,
-        ),
-    )
-    return json.loads(response.text)
+async def _call_structured(prompt: str, schema: dict, max_retries: int = 3) -> dict:
+    """
+    Chama Gemini com saída JSON estruturada e retorna o dict parseado.
+    Com retry exponencial para 503 (overload) e 429 (rate limit).
+    """
+    last_error: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            response = await get_client().aio.models.generate_content(
+                model=MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema,
+                    temperature=0.7,
+                ),
+            )
+            return json.loads(response.text)
+        except ServerError as e:
+            last_error = e
+            if attempt < max_retries - 1:
+                await asyncio.sleep(2 ** attempt)
+                continue
+            raise
+        except ClientError as e:
+            # 429 = rate limit, retry; outros 4xx = falha permanente
+            if "429" in str(e) and attempt < max_retries - 1:
+                last_error = e
+                await asyncio.sleep(2 ** attempt + 1)
+                continue
+            raise
+    if last_error:
+        raise last_error
+    raise RuntimeError("Falha após múltiplas tentativas")
 
 
 async def generate_market_insights(query: str, market_data: dict) -> dict:
@@ -157,6 +304,81 @@ REGRAS DO MERCADO LIVRE:
 - Image briefing: detalhado em inglês, pronto para usar em ferramentas de geração (Midjourney, Leonardo, DALL-E)"""
 
     return await _call_structured(prompt, LISTING_SCHEMA)
+
+
+async def generate_dashboard_analysis(target: dict, competitors: list, market_summary: dict) -> dict:
+    """Gera o dashboard completo de 10 seções com base nos dados reais coletados do ML."""
+    target_brief = {
+        "name": target.get("name"),
+        "category_id": target.get("category_id"),
+        "buy_box_price": (target.get("buy_box") or {}).get("price"),
+        "buy_box_original_price": (target.get("buy_box") or {}).get("original_price"),
+        "free_shipping": (target.get("buy_box") or {}).get("free_shipping"),
+        "logistic_type": (target.get("buy_box") or {}).get("logistic_type"),
+        "listing_type": (target.get("buy_box") or {}).get("listing_type"),
+        "items_count": target.get("items_count"),
+        "price_avg": target.get("price_avg"),
+        "price_min": target.get("price_min"),
+        "price_max": target.get("price_max"),
+        "free_shipping_pct": target.get("free_shipping_pct"),
+        "fulfillment_pct": target.get("fulfillment_pct"),
+        "discount_count": target.get("discount_count"),
+        "key_attributes": [
+            f"{a.get('name')}: {a.get('value_name')}"
+            for a in (target.get("attributes") or [])[:6]
+        ],
+    }
+
+    competitors_brief = [
+        {
+            "name": c.get("name"),
+            "buy_box_price": (c.get("buy_box") or {}).get("price"),
+            "free_shipping": (c.get("buy_box") or {}).get("free_shipping"),
+            "logistic_type": (c.get("buy_box") or {}).get("logistic_type"),
+            "listing_type": (c.get("buy_box") or {}).get("listing_type"),
+            "items_count": c.get("items_count"),
+            "price_avg": c.get("price_avg"),
+            "free_shipping_pct": c.get("free_shipping_pct"),
+            "discount_count": c.get("discount_count"),
+        }
+        for c in competitors[:9]
+    ]
+
+    prompt = f"""Você é um gestor experiente de e-commerce no Mercado Livre Brasil.
+Faça uma análise completa do anúncio abaixo, gerando um dashboard com 10 seções.
+
+ANÚNCIO ANALISADO:
+{json.dumps(target_brief, ensure_ascii=False, indent=2)}
+
+CONCORRENTES DIRETOS ({len(competitors_brief)}):
+{json.dumps(competitors_brief, ensure_ascii=False, indent=2)}
+
+MERCADO TOTAL:
+- Total de anúncios na categoria: {market_summary.get("total_listings", 0)}
+- Produtos analisados: {market_summary.get("products_analyzed", 0)}
+- Anúncios analisados: {market_summary.get("items_analyzed", 0)}
+
+INSTRUÇÕES IMPORTANTES:
+1. Toda conclusão deve estar baseada nos DADOS REAIS acima — não invente números.
+2. Para métricas que NÃO estão nos dados (visitas, conversão, faturamento, histórico temporal),
+   marque o campo correspondente como "indisponivel" e explique no summary que esses dados só
+   estão disponíveis via login do vendedor na API do ML.
+3. Seja direto, analítico e profissional, como um gestor sênior de marketplace.
+4. Recomendações devem ser ESPECÍFICAS (com números, percentuais, ações concretas), não genéricas.
+
+Gere as 10 seções:
+1. Visão geral (status, ponto forte, ponto fraco, potencial, competitividade)
+2. Performance comercial (tendência, métricas como cards)
+3. Tráfego e conversão (qual o problema principal)
+4. Preço e competitividade (classificação do preço, % vs mercado)
+5. Ranking e exposição (tendência de visibilidade)
+6. Análise de concorrência (principais comparações)
+7. Diagnóstico automático (categoria + razão)
+8. Recomendações práticas (com prioridade, impacto, justificativa, ação)
+9. Alertas automáticos (severidade + mensagem)
+10. Conclusão executiva (tom de gestor de e-commerce, direto e prático)"""
+
+    return await _call_structured(prompt, DASHBOARD_SCHEMA)
 
 
 async def generate_campaign_strategy(data: dict) -> dict:
